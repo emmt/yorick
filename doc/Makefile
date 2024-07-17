@@ -11,7 +11,7 @@ TEXI2DVI = texi2dvi
 TEXI2PDF = texi2dvi --pdf
 TEX = tex
 PDFTEX = pdftex
-YORICK = ../yorick/yorick$(EXE_SFX)
+YORICK = valgrind --tool=memcheck --leak-check=full ../yorick/yorick$(EXE_SFX)
 
 all: yorick.info docs
 
