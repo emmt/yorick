@@ -17,23 +17,37 @@ extern void FreeMemberList(Member *member, long n);
 
 /*--------------------------------------------------------------------------*/
 
+#define round_up(a, b) ((((a) + ((b) - 1))/(b))*(b))
+static const size_t small_array_data_alignment = (sizeof(void*) > sizeof(double) ? sizeof(void*) : sizeof(double));
+static const size_t small_array_data_offset = round_up(sizeof(Array), small_array_data_alignment);
+static const size_t small_array_data_size = (2*sizeof(double));
+static const size_t small_array_size = (small_array_data_offset + small_array_data_size);
+
 /* Set up a block allocator which grabs space for 64 scalar array objects
    at a time.  Since Array contains an ops pointer, the alignment
    of an Array must be at least as strict as a void*.  */
-static MemryBlock arrayBlock= {0, 0, sizeof(Array),
-                                   64*sizeof(Array)};
+static MemryBlock arrayBlock= {0, 0, small_array_size,
+                                   64*small_array_size};
+
+static void FreeSmallArray(void* ctx)
+{
+  FreeUnit(&arrayBlock, ctx);
+}
 
 Array *NewArray(StructDef *base, Dimension *dims)
 {
-  long number= TotalNumber(dims);
-  long size= base->size;
-  Array *array= (number*size>2*sizeof(double))?
-    p_malloc(sizeof(Array)+number*size) : NextUnit(&arrayBlock);
-  array->references= 0;
-  array->ops= base->dataOps;
-  array->type.base= Ref(base);
-  array->type.dims= Ref(dims);
-  array->type.number= number;
+  long number = TotalNumber(dims);
+  long size = base->size*number;
+  Array *array;
+  void (*destructor)(void*);
+  if (size > small_array_data_size) {
+    array = p_malloc(small_array_data_offset + size);
+    destructor = p_free;
+  } else {
+    array = NextUnit(&arrayBlock);
+    destructor = FreeSmallArray;
+  }
+  void* values = (char*)array + small_array_data_offset;
   /* Dangerous to try to initialize things with copy -- could leave
      junk in padding between struct members, which prevents comparison
      operations from working properly.  On the other hand, an array
@@ -45,7 +59,29 @@ Array *NewArray(StructDef *base, Dimension *dims)
      On the other hand,
      memset(array->value.c, 0, size*number);
      is gratuitous in the case of non-pointer objects */
-  if (base->Copy!=&CopyX) memset(array->value.c, 0, size*number);
+  if (base->Copy!=&CopyX) memset(values, 0, size);
+  return InstantiateArray(array, base, dims, values, number,
+                          destructor, array);
+}
+#include <stdio.h>
+Array *InstantiateArray(Array* array, StructDef *base,
+                        Dimension *dims, void* values, long number,
+                        void (*destroy)(void*), void* context)
+{
+#if 0
+  fprintf(stderr, "InstantiateArray((Array*)%p, (StructDef*)%p, (Dimension*)%p, (void*)%p, %ld, %s, (void*)%p\n",
+          array, base, dims, values, number,
+          (destroy == p_free ? "p_free" : (destroy == FreeSmallArray ? "FreeSmallArray" : "destroy")),
+          context);
+#endif
+  array->destroy = destroy;
+  array->context = context;
+  array->value.c = values;
+  array->references= 0;
+  array->ops= base->dataOps;
+  array->type.base= Ref(base);
+  array->type.dims= Ref(dims);
+  array->type.number= number;
   return array;
 }
 
@@ -62,8 +98,7 @@ void FreeArray(void *v)  /* ******* Use Unref(array) ******* */
   base->Copy(base, array->value.c, array->value.c, number);
   Unref(base);
   FreeDimension(array->type.dims);
-  if (number*size>2*sizeof(double)) p_free(array);
-  else FreeUnit(&arrayBlock, array);
+  array->destroy(array->context);
 }
 
 /* Set up a block allocator which grabs space for 16 StructDefs

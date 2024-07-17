@@ -316,26 +316,17 @@ struct Array {
   int references;   /* reference counter */
   Operations *ops;  /* virtual function table */
   Member type;      /* full data type, i.e.-    base_type x[]...[] */
-#ifdef PAD_ARRAY
-  /* on a pentium, 4-byte aligned doubles are legal, but access is
-   * far slower than to 8-byte aligned doubles
-   * since a Member is 12 bytes long, need to add 4 more here
-   * -- no other platform at this time needs this hack */
-  int pad;
-#endif
+  void (*destroy)(void*); /* destructor for this instance */
+  void* context; /* context for the destructor */
   union {
-    /* Appropriate member is selected by ops; there are only 10 possible ops,
-       corresponding to char, short, int, long, float, double, complex,
-       string, pointer, and struct instance.
-       Actual array length is determined by type. */
-    char c[1];
-    short s[1];
-    int i[1];
-    long l[1];
-    float f[1];
-    double d[2]; /* also complex */
-    char *q[1];  /* string */
-    void *p[1];
+    char*   c;
+    short*  s;
+    int*    i;
+    long*   l;
+    float*  f;
+    double* d; /* also complex */
+    char**  q;  /* string */
+    void**  p;
   } value;
 };
 
@@ -472,6 +463,9 @@ PLUG_API void FreeStructDef(void *base);      /* *** Use Unref(base) *** */
 
 PLUG_API Array *NewArray(StructDef *base, Dimension *dims);
 PLUG_API void FreeArray(void *array);        /* *** Use Unref(array) *** */
+PLUG_API Array *InstantiateArray(Array* array, StructDef *base,
+                                 Dimension *dims, void* values, long number,
+                                 void (*destroy)(void*), void* context);
 
 /* NewTmpArray/ClearTmpArray may be used to get one or two temporary
    arrays.  Call ClearTmpArray first, then NewTmpArray several times,
